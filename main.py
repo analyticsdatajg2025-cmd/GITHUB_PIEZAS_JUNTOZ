@@ -10,7 +10,6 @@ import io
 import urllib.parse
 
 # --- CONFIGURACIÓN DE RUTAS ---
-# Usamos realpath para que GitHub Actions encuentre las carpetas sin importar dónde se ejecute
 BASE_PATH = os.path.dirname(os.path.realpath(__file__))
 OUTPUT_DIR = os.path.join(BASE_PATH, 'output')
 TAGS_DIR = os.path.join(BASE_PATH, 'FONDOS', 'TAGS')
@@ -68,63 +67,58 @@ CONFIG = {
     }
 }
 
-def get_font(name, size):
-    path = os.path.join(FONTS_DIR, f"HurmeGeometricSans1 {name}.otf")
+def get_font(style, size):
+    path = os.path.join(FONTS_DIR, f"HurmeGeometricSans1 {style}.otf")
     if not os.path.exists(path):
-        # Fallback por si acaso el nombre no tiene espacios exactos
         return ImageFont.load_default()
     return ImageFont.truetype(path, size)
 
 def find_format_image(format_name):
-    """Busca el archivo de fondo aceptando .jpg o .png"""
-    for ext in ['.jpg', '.JPG', '.png', '.PNG']:
+    for ext in ['.jpg', '.JPG', '.png', '.PNG', '.jpeg']:
         path = os.path.join(FORMATS_DIR, f"{format_name}{ext}")
         if os.path.exists(path):
             return path
     return None
 
-import urllib.parse
-
 def scrape_image(sku):
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         }
-        # Buscamos el SKU
         r = requests.get(f"https://juntoz.com/search?q={sku}", timeout=15, headers=headers)
         soup = BeautifulSoup(r.text, 'html.parser')
-        
-        # Buscamos todas las imágenes
         imgs = soup.find_all('img', src=True)
-        
         for img in imgs:
             src = img['src']
-            # Si el link contiene el SKU o la estructura de Next Image que me pasaste
             if sku.lower() in src.lower() or '_next/image?url=' in src:
-                # Extraemos lo que está después de 'url='
-                parsed_url = urllib.parse.urlparse(src)
-                query_params = urllib.parse.parse_qs(parsed_url.query)
-                
-                if 'url' in query_params:
-                    # Esta es la URL real de la imagen (el blob de Azure)
-                    real_url = query_params['url'][0]
-                    return real_url
-                
-                # Si no tiene parámetros pero empieza con // o es la ruta directa
+                if '_next/image?url=' in src:
+                    parsed_url = urllib.parse.urlparse(src)
+                    query_params = urllib.parse.parse_qs(parsed_url.query)
+                    if 'url' in query_params:
+                        return query_params['url'][0]
                 if src.startswith('//'): return 'https:' + src
                 if src.startswith('http'): return src
-                
     except Exception as e:
         print(f"Error en scraping para SKU {sku}: {e}")
     return None
 
 def process_img(url, box_size):
-    r = requests.get(url)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://juntoz.com/'
+    }
+    r = requests.get(url, headers=headers, timeout=15)
+    if r.status_code != 200 or 'image' not in r.headers.get('Content-Type', ''):
+        raise ValueError(f"Imagen inválida. Status: {r.status_code}")
+
     img = Image.open(io.BytesIO(r.content)).convert("RGBA")
+    img.thumbnail((box_size[2]-box_size[0], box_size[3]-box_size[1]), Image.LANCZOS)
+    
+    # Quitar fondo blanco
     datas = img.getdata()
     new_data = [(255, 255, 255, 0) if d[0]>240 and d[1]>240 and d[2]>240 else d for d in datas]
     img.putdata(new_data)
-    img.thumbnail((box_size[2]-box_size[0], box_size[3]-box_size[1]), Image.LANCZOS)
     return img
 
 def draw_text_wrapped(draw, text, pos, max_x, font, fill):
@@ -151,7 +145,7 @@ def create_piece(row):
     
     bg_path = find_format_image(f_key)
     if not bg_path:
-        print(f"Error: No se encontró el fondo para {f_key} en {FORMATS_DIR}")
+        print(f"Error: No se encontró fondo para {f_key}")
         return None
         
     canvas = Image.open(bg_path).convert("RGBA")
@@ -207,7 +201,7 @@ def create_piece(row):
         draw.text((pos_x, c['rect_morado'][1]+15), txt, font=f_bold, fill="white")
 
     draw.text(c['marca_pos'], str(row['Marca']), font=get_font("Bold", c['fonts']['marca']), fill="black")
-    draw_text_wrapped(draw, row['Nombre del producto'], c['prod_pos'], c['prod_max_x'], get_font("Regular Oblique", c['fonts']['prod']), "black")
+    draw_text_wrapped(draw, str(row['Nombre del producto']), c['prod_pos'], c['prod_max_x'], get_font("Regular Oblique", c['fonts']['prod']), "black")
 
     out_fn = f"{row['SKU']}_{f_key}.png"
     canvas.convert("RGB").save(os.path.join(OUTPUT_DIR, out_fn))
@@ -219,24 +213,27 @@ def main():
         creds = Credentials.from_service_account_info(creds_json, scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'])
         client = gspread.authorize(creds)
         sheet = client.open_by_key("19e1ct-5GhElvCKRthr-5O9t8O3knvVTB2iDvMQo0zzU")
-        
         data = sheet.worksheet("Hoja 1").get_all_records()
         results_ws = sheet.worksheet("Resultados")
         
         new_rows = []
         for row in data:
             if not row['SKU']: continue
-            print(f"Procesando: {row['SKU']} ({row['Formato']})")
-            fn = create_piece(row)
-            if fn:
-                link = f"https://raw.githubusercontent.com/analyticsdatajg2025-cmd/GITHUB_PIEZAS_JUNTOZ/main/output/{fn}"
-                new_rows.append([datetime.now().strftime("%Y-%m-%d %H:%M"), f"{row['SKU']}_{row['Formato']}", row['Formato'], link])
-        
+            try:
+                print(f"Procesando: {row['SKU']} ({row['Formato']})")
+                fn = create_piece(row)
+                if fn:
+                    link = f"https://raw.githubusercontent.com/analyticsdatajg2025-cmd/GITHUB_PIEZAS_JUNTOZ/main/output/{fn}"
+                    new_rows.append([datetime.now().strftime("%Y-%m-%d %H:%M"), f"{row['SKU']}_{row['Formato']}", row['Formato'], link])
+            except Exception as e_row:
+                print(f"Error procesando SKU {row['SKU']}: {e_row}")
+                continue
+
         if new_rows:
             results_ws.append_rows(new_rows)
-            print(f"Finalizado: {len(new_rows)} filas enviadas a Resultados.")
+            print(f"Finalizado: {len(new_rows)} filas enviadas.")
     except Exception as e:
-        print(f"Error crítico: {e}")
+        print(f"Error crítico en main: {e}")
 
 if __name__ == "__main__":
     main()
