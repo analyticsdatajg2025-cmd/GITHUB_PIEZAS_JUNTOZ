@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from bs4 import BeautifulSoup
 from datetime import datetime
 import io
+import urllib.parse
 
 # --- CONFIGURACIÓN DE RUTAS ---
 # Usamos realpath para que GitHub Actions encuentre las carpetas sin importar dónde se ejecute
@@ -82,18 +83,40 @@ def find_format_image(format_name):
             return path
     return None
 
+import urllib.parse
+
 def scrape_image(sku):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get(f"https://juntoz.com/search?q={sku}", timeout=10, headers=headers)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        # Buscamos el SKU
+        r = requests.get(f"https://juntoz.com/search?q={sku}", timeout=15, headers=headers)
         soup = BeautifulSoup(r.text, 'html.parser')
-        img = soup.find('img', {'src': True, 'class': lambda x: x and 'image' in x.lower()})
-        if not img:
-            img = soup.find('img', {'src': True})
-        url = img['src'] if img else None
-        if url and url.startswith('//'): url = 'https:' + url
-        return url
-    except: return None
+        
+        # Buscamos todas las imágenes
+        imgs = soup.find_all('img', src=True)
+        
+        for img in imgs:
+            src = img['src']
+            # Si el link contiene el SKU o la estructura de Next Image que me pasaste
+            if sku.lower() in src.lower() or '_next/image?url=' in src:
+                # Extraemos lo que está después de 'url='
+                parsed_url = urllib.parse.urlparse(src)
+                query_params = urllib.parse.parse_qs(parsed_url.query)
+                
+                if 'url' in query_params:
+                    # Esta es la URL real de la imagen (el blob de Azure)
+                    real_url = query_params['url'][0]
+                    return real_url
+                
+                # Si no tiene parámetros pero empieza con // o es la ruta directa
+                if src.startswith('//'): return 'https:' + src
+                if src.startswith('http'): return src
+                
+    except Exception as e:
+        print(f"Error en scraping para SKU {sku}: {e}")
+    return None
 
 def process_img(url, box_size):
     r = requests.get(url)
