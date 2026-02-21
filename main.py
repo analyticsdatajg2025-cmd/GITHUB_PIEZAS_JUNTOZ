@@ -83,35 +83,33 @@ def find_format_image(format_name):
 def scrape_image(sku):
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         }
-        # Buscamos por SKU
         r = requests.get(f"https://juntoz.com/search?q={sku}", timeout=15, headers=headers)
         soup = BeautifulSoup(r.text, 'html.parser')
         
-        # Estrategia: Buscar imágenes con srcset (fotos de producto reales)
+        # Estrategia Senior: Buscar en el srcset para encontrar la URL real de Next.js
         imgs = soup.find_all('img', srcset=True)
         
         for img in imgs:
-            # Preferimos el atributo 'src' que ya tiene la URL de Next.js
             src = img.get('src', '')
-            
+            # Buscamos el patrón que nos mostraste del inspeccionador
             if '_next/image?url=' in src:
                 parsed_url = urllib.parse.urlparse(src)
                 query_params = urllib.parse.parse_qs(parsed_url.query)
                 if 'url' in query_params:
+                    # Extraemos la URL limpia que está dentro del parámetro
                     real_url = query_params['url'][0]
-                    # Validamos que no sea un logo o svg
-                    if not any(x in real_url.lower() for x in ['.svg', 'logo', 'jz_mall']):
+                    # Validamos que sea una imagen de producto (blob de Azure)
+                    if 'blob.core.windows.net' in real_url:
                         return real_url
 
-        # Fallback: buscar cualquier imagen que contenga el SKU en su URL o ALT
+        # Fallback por si la estructura cambia
         for img in soup.find_all('img', src=True):
             src = img['src']
-            alt = img.get('alt', '').lower()
-            if sku.lower() in src.lower() or sku.lower() in alt:
+            if 'blob.core.windows.net' in src:
                 if src.startswith('//'): return 'https:' + src
-                if src.startswith('http'): return src
+                return src
                 
     except Exception as e:
         print(f"Error en scraping para SKU {sku}: {e}")
@@ -119,23 +117,28 @@ def scrape_image(sku):
 
 def process_img(url, box_size):
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         'Referer': 'https://juntoz.com/'
     }
     r = requests.get(url, headers=headers, timeout=15)
     
-    # Verificamos si es una imagen válida
-    if r.status_code != 200 or 'image' not in r.headers.get('Content-Type', ''):
-        raise ValueError(f"URL no es una imagen válida. Status: {r.status_code}")
+    if r.status_code != 200:
+        raise ValueError(f"No se pudo descargar la imagen. Status: {r.status_code}")
 
     img = Image.open(io.BytesIO(r.content)).convert("RGBA")
     
-    # Thumbnail para no distorsionar
+    # Redimensionar (Thumbnail) para mantener proporción
     img.thumbnail((box_size[2]-box_size[0], box_size[3]-box_size[1]), Image.LANCZOS)
     
-    # Quitar fondo blanco (tolerancia 240)
+    # Limpieza de fondo blanco
     datas = img.getdata()
-    new_data = [(255, 255, 255, 0) if d[0]>240 and d[1]>240 and d[2]>240 else d for d in datas]
+    new_data = []
+    for item in datas:
+        # Tolerancia para blancos (240-255)
+        if item[0] > 240 and item[1] > 240 and item[2] > 240:
+            new_data.append((255, 255, 255, 0))
+        else:
+            new_data.append(item)
     img.putdata(new_data)
     
     return img
@@ -164,13 +167,13 @@ def create_piece(row):
     
     bg_path = find_format_image(f_key)
     if not bg_path:
-        print(f"Error: No se encontró el fondo para {f_key} en {FORMATS_DIR}")
+        print(f"Error: No existe el fondo {f_key}")
         return None
         
     canvas = Image.open(bg_path).convert("RGBA")
     draw = ImageDraw.Draw(canvas)
     
-    # 1. Imagen Producto
+    # 1. Imagen Producto (Llamada al Scraping corregido)
     url = scrape_image(row['SKU'])
     if url:
         p_img = process_img(url, c['img_box'])
@@ -178,6 +181,8 @@ def create_piece(row):
         center_x = c['img_box'][0] + (c['img_box'][2] - c['img_box'][0] - w) // 2
         center_y = c['img_box'][1] + (c['img_box'][3] - c['img_box'][1] - h) // 2
         canvas.paste(p_img, (center_x, center_y), p_img)
+    else:
+        print(f"No se encontró imagen para el SKU {row['SKU']}")
 
     # 2. Tipo Envío
     envio_val = str(row['tipo envio']).strip()
@@ -187,11 +192,11 @@ def create_piece(row):
         e_img.thumbnail((c['envio_box'][2]-c['envio_box'][0], c['envio_box'][3]-c['envio_box'][1]))
         canvas.paste(e_img, (c['envio_box'][0], c['envio_box'][1]), e_img)
 
-    # 3. Contenedores
+    # 3. Dibujo de Contenedores
     draw.rectangle(c['rect_gris'], fill="#D9D9D9")
     draw.rounded_rectangle(c['rect_morado'], radius=20, fill="#8D3DCB")
 
-    # 4. Textos Precios
+    # 4. Precios
     f_reg = get_font("Regular", c['fonts']['reg'])
     f_bold = get_font("Bold", c['fonts']['precio'])
     
@@ -202,6 +207,7 @@ def create_piece(row):
     if row['Tipo precio regular'] == "Precio sin cupón":
         draw.text((c['rect_morado'][0]+20, c['rect_morado'][1]+35), "S/", font=get_font("Regular", 35), fill="white")
         draw.text((c['rect_morado'][0]+65, c['rect_morado'][1]+15), str(row['Precio descuento']), font=f_bold, fill="white")
+        
         draw.text((c['cupon_img_box'][0], c['rect_morado'][1]+5), "Con cupón:", font=get_font("Bold", 20), fill="white")
         val_cupon = str(row['Con cupon']).strip()
         if val_cupon in ["BBVACREDITO", "BCPCREDITO"]:
@@ -219,6 +225,7 @@ def create_piece(row):
         pos_x = c['rect_morado'][0] + (c['rect_morado'][2]-c['rect_morado'][0]-w_txt)//2
         draw.text((pos_x, c['rect_morado'][1]+15), txt, font=f_bold, fill="white")
 
+    # 5. Marca y Producto
     draw.text(c['marca_pos'], str(row['Marca']), font=get_font("Bold", c['fonts']['marca']), fill="black")
     draw_text_wrapped(draw, str(row['Nombre del producto']), c['prod_pos'], c['prod_max_x'], get_font("Regular Oblique", c['fonts']['prod']), "black")
 
