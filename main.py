@@ -9,7 +9,8 @@ from datetime import datetime
 import io
 
 # --- CONFIGURACIÓN DE RUTAS ---
-BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+# Usamos realpath para que GitHub Actions encuentre las carpetas sin importar dónde se ejecute
+BASE_PATH = os.path.dirname(os.path.realpath(__file__))
 OUTPUT_DIR = os.path.join(BASE_PATH, 'output')
 TAGS_DIR = os.path.join(BASE_PATH, 'TAGS')
 FORMATS_DIR = os.path.join(BASE_PATH, 'FORMATOS')
@@ -68,29 +69,38 @@ CONFIG = {
 
 def get_font(name, size):
     path = os.path.join(FONTS_DIR, f"HurmeGeometricSans1 {name}.otf")
+    if not os.path.exists(path):
+        # Fallback por si acaso el nombre no tiene espacios exactos
+        return ImageFont.load_default()
     return ImageFont.truetype(path, size)
+
+def find_format_image(format_name):
+    """Busca el archivo de fondo aceptando .jpg o .png"""
+    for ext in ['.jpg', '.JPG', '.png', '.PNG']:
+        path = os.path.join(FORMATS_DIR, f"{format_name}{ext}")
+        if os.path.exists(path):
+            return path
+    return None
 
 def scrape_image(sku):
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         r = requests.get(f"https://juntoz.com/search?q={sku}", timeout=10, headers=headers)
         soup = BeautifulSoup(r.text, 'html.parser')
-        # Intentar buscar imágenes con clases comunes de producto
         img = soup.find('img', {'src': True, 'class': lambda x: x and 'image' in x.lower()})
         if not img:
             img = soup.find('img', {'src': True})
-        return img['src'] if img else None
+        url = img['src'] if img else None
+        if url and url.startswith('//'): url = 'https:' + url
+        return url
     except: return None
 
 def process_img(url, box_size):
-    if url.startswith('//'): url = 'https:' + url
     r = requests.get(url)
     img = Image.open(io.BytesIO(r.content)).convert("RGBA")
-    # Quitar fondo blanco (tolerancia de color)
     datas = img.getdata()
     new_data = [(255, 255, 255, 0) if d[0]>240 and d[1]>240 and d[2]>240 else d for d in datas]
     img.putdata(new_data)
-    # Redimensionar manteniendo proporción (thumbnail)
     img.thumbnail((box_size[2]-box_size[0], box_size[3]-box_size[1]), Image.LANCZOS)
     return img
 
@@ -115,20 +125,25 @@ def create_piece(row):
     f_key = row['Formato']
     if f_key not in CONFIG: return None
     c = CONFIG[f_key]
-    canvas = Image.open(os.path.join(FORMATS_DIR, f"{f_key}.jpg")).convert("RGBA")
+    
+    bg_path = find_format_image(f_key)
+    if not bg_path:
+        print(f"Error: No se encontró el fondo para {f_key} en {FORMATS_DIR}")
+        return None
+        
+    canvas = Image.open(bg_path).convert("RGBA")
     draw = ImageDraw.Draw(canvas)
     
-    # 1. Imagen Producto (Scraping)
+    # 1. Imagen Producto
     url = scrape_image(row['SKU'])
     if url:
         p_img = process_img(url, c['img_box'])
-        # Centrar imagen en el box
         w, h = p_img.size
         center_x = c['img_box'][0] + (c['img_box'][2] - c['img_box'][0] - w) // 2
         center_y = c['img_box'][1] + (c['img_box'][3] - c['img_box'][1] - h) // 2
         canvas.paste(p_img, (center_x, center_y), p_img)
 
-    # 2. Tipo Envío (Si es NINGUNO o no existe el tag, no hace nada)
+    # 2. Tipo Envío
     envio_val = str(row['tipo envio']).strip()
     envio_path = os.path.join(TAGS_DIR, f"{envio_val}.png")
     if envio_val != "NINGUNO" and os.path.exists(envio_path):
@@ -144,41 +159,33 @@ def create_piece(row):
     f_reg = get_font("Regular", c['fonts']['reg'])
     f_bold = get_font("Bold", c['fonts']['precio'])
     
-    # Renderizado en el bloque gris (Precio anterior/referencia)
     draw.text(c['precio_reg_pos'], f"{row['Tipo precio regular']}:", font=f_reg, fill="black")
     draw.text(c['simbolo_reg_pos'], "S/", font=f_reg, fill="black")
     draw.text(c['valor_reg_pos'], str(row['Valor precio regular']), font=f_reg, fill="black")
 
-    # Renderizado en bloque morado (Precio Descuento actual)
     if row['Tipo precio regular'] == "Precio sin cupón":
-        # Layout con cupón a la derecha
         draw.text((c['rect_morado'][0]+20, c['rect_morado'][1]+35), "S/", font=get_font("Regular", 35), fill="white")
         draw.text((c['rect_morado'][0]+65, c['rect_morado'][1]+15), str(row['Precio descuento']), font=f_bold, fill="white")
-        
-        # Lógica Cupón
         draw.text((c['cupon_img_box'][0], c['rect_morado'][1]+5), "Con cupón:", font=get_font("Bold", 20), fill="white")
         val_cupon = str(row['Con cupon']).strip()
         if val_cupon in ["BBVACREDITO", "BCPCREDITO"]:
             tag_path = os.path.join(TAGS_DIR, f"{val_cupon}.png")
-            tag_img = Image.open(tag_path).convert("RGBA")
-            tag_img.thumbnail((c['cupon_img_box'][2]-c['cupon_img_box'][0], c['cupon_img_box'][3]-c['cupon_img_box'][1]))
-            canvas.paste(tag_img, (c['cupon_img_box'][0], c['cupon_img_box'][1]), tag_img)
+            if os.path.exists(tag_path):
+                tag_img = Image.open(tag_path).convert("RGBA")
+                tag_img.thumbnail((c['cupon_img_box'][2]-c['cupon_img_box'][0], c['cupon_img_box'][3]-c['cupon_img_box'][1]))
+                canvas.paste(tag_img, (c['cupon_img_box'][0], c['cupon_img_box'][1]), tag_img)
         else:
-            # Texto personalizado en cajita blanca
             draw.rounded_rectangle(c['cupon_img_box'], radius=10, fill="white")
             draw.text((c['cupon_img_box'][0]+15, c['cupon_img_box'][1]+8), val_cupon, font=get_font("Bold", 22), fill="#8D3DCB")
     else:
-        # Centrado simple del precio descuento
         txt = f"S/ {row['Precio descuento']}"
         w_txt = draw.textbbox((0,0), txt, font=f_bold)[2]
         pos_x = c['rect_morado'][0] + (c['rect_morado'][2]-c['rect_morado'][0]-w_txt)//2
         draw.text((pos_x, c['rect_morado'][1]+15), txt, font=f_bold, fill="white")
 
-    # 5. Marca y Producto
     draw.text(c['marca_pos'], str(row['Marca']), font=get_font("Bold", c['fonts']['marca']), fill="black")
     draw_text_wrapped(draw, row['Nombre del producto'], c['prod_pos'], c['prod_max_x'], get_font("Regular Oblique", c['fonts']['prod']), "black")
 
-    # Guardado final
     out_fn = f"{row['SKU']}_{f_key}.png"
     canvas.convert("RGB").save(os.path.join(OUTPUT_DIR, out_fn))
     return out_fn
@@ -204,9 +211,9 @@ def main():
         
         if new_rows:
             results_ws.append_rows(new_rows)
-            print(f"Éxito: {len(new_rows)} piezas generadas.")
+            print(f"Finalizado: {len(new_rows)} filas enviadas a Resultados.")
     except Exception as e:
-        print(f"Error en ejecución: {e}")
+        print(f"Error crítico: {e}")
 
 if __name__ == "__main__":
     main()
