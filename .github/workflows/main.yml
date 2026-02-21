@@ -1,14 +1,14 @@
 name: Generador de Piezas Juntoz
 
 on:
-  workflow_dispatch: # Ejecución manual desde la pestaña Actions
+  workflow_dispatch: # Permite ejecución manual
   schedule:
-    - cron: '0 * * * *' # Ejecución automática cada hora
+    # 10:00 AM hora de Perú (GMT-5) es 15:00 UTC
+    - cron: '0 15 * * *' 
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Permisos necesarios para que el bot pueda escribir y subir las imágenes al repositorio
     permissions:
       contents: write
       
@@ -19,19 +19,13 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10' # Versión estable que evita avisos de obsolescencia
+          python-version: '3.10'
           cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Debug - List Files
-        # Este paso es vital para verificar que las carpetas y archivos existen con el nombre correcto
-        run: |
-          echo "Verificando estructura de carpetas:"
-          ls -R
 
       - name: Run Automation
         env:
@@ -43,10 +37,9 @@ jobs:
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "actions@github.com"
           
-          # Agregamos todas las imágenes generadas en la carpeta output
-          git add output/*.png || echo "No se encontraron imágenes nuevas para agregar"
+          # Agregamos todas las imágenes generadas
+          git add output/*.png || echo "No hay imágenes nuevas"
           
-          # Solo realiza el commit y push si hay cambios detectados para evitar errores de ejecución
           if [ -n "$(git status --porcelain)" ]; then
             git commit -m "Piezas generadas automáticamente: $(date)"
             git push
