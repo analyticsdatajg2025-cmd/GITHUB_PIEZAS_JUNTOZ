@@ -67,8 +67,8 @@ CONFIG = {
     }
 }
 
-def get_font(style, size):
-    path = os.path.join(FONTS_DIR, f"HurmeGeometricSans1 {style}.otf")
+def get_font(name, size):
+    path = os.path.join(FONTS_DIR, f"HurmeGeometricSans1 {name}.otf")
     if not os.path.exists(path):
         return ImageFont.load_default()
     return ImageFont.truetype(path, size)
@@ -84,21 +84,35 @@ def scrape_image(sku):
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         }
+        # Buscamos por SKU
         r = requests.get(f"https://juntoz.com/search?q={sku}", timeout=15, headers=headers)
         soup = BeautifulSoup(r.text, 'html.parser')
-        imgs = soup.find_all('img', src=True)
+        
+        # Estrategia: Buscar imágenes con srcset (fotos de producto reales)
+        imgs = soup.find_all('img', srcset=True)
+        
         for img in imgs:
+            # Preferimos el atributo 'src' que ya tiene la URL de Next.js
+            src = img.get('src', '')
+            
+            if '_next/image?url=' in src:
+                parsed_url = urllib.parse.urlparse(src)
+                query_params = urllib.parse.parse_qs(parsed_url.query)
+                if 'url' in query_params:
+                    real_url = query_params['url'][0]
+                    # Validamos que no sea un logo o svg
+                    if not any(x in real_url.lower() for x in ['.svg', 'logo', 'jz_mall']):
+                        return real_url
+
+        # Fallback: buscar cualquier imagen que contenga el SKU en su URL o ALT
+        for img in soup.find_all('img', src=True):
             src = img['src']
-            if sku.lower() in src.lower() or '_next/image?url=' in src:
-                if '_next/image?url=' in src:
-                    parsed_url = urllib.parse.urlparse(src)
-                    query_params = urllib.parse.parse_qs(parsed_url.query)
-                    if 'url' in query_params:
-                        return query_params['url'][0]
+            alt = img.get('alt', '').lower()
+            if sku.lower() in src.lower() or sku.lower() in alt:
                 if src.startswith('//'): return 'https:' + src
                 if src.startswith('http'): return src
+                
     except Exception as e:
         print(f"Error en scraping para SKU {sku}: {e}")
     return None
@@ -109,16 +123,21 @@ def process_img(url, box_size):
         'Referer': 'https://juntoz.com/'
     }
     r = requests.get(url, headers=headers, timeout=15)
+    
+    # Verificamos si es una imagen válida
     if r.status_code != 200 or 'image' not in r.headers.get('Content-Type', ''):
-        raise ValueError(f"Imagen inválida. Status: {r.status_code}")
+        raise ValueError(f"URL no es una imagen válida. Status: {r.status_code}")
 
     img = Image.open(io.BytesIO(r.content)).convert("RGBA")
+    
+    # Thumbnail para no distorsionar
     img.thumbnail((box_size[2]-box_size[0], box_size[3]-box_size[1]), Image.LANCZOS)
     
-    # Quitar fondo blanco
+    # Quitar fondo blanco (tolerancia 240)
     datas = img.getdata()
     new_data = [(255, 255, 255, 0) if d[0]>240 and d[1]>240 and d[2]>240 else d for d in datas]
     img.putdata(new_data)
+    
     return img
 
 def draw_text_wrapped(draw, text, pos, max_x, font, fill):
@@ -145,7 +164,7 @@ def create_piece(row):
     
     bg_path = find_format_image(f_key)
     if not bg_path:
-        print(f"Error: No se encontró fondo para {f_key}")
+        print(f"Error: No se encontró el fondo para {f_key} en {FORMATS_DIR}")
         return None
         
     canvas = Image.open(bg_path).convert("RGBA")
@@ -213,6 +232,7 @@ def main():
         creds = Credentials.from_service_account_info(creds_json, scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'])
         client = gspread.authorize(creds)
         sheet = client.open_by_key("19e1ct-5GhElvCKRthr-5O9t8O3knvVTB2iDvMQo0zzU")
+        
         data = sheet.worksheet("Hoja 1").get_all_records()
         results_ws = sheet.worksheet("Resultados")
         
@@ -228,12 +248,12 @@ def main():
             except Exception as e_row:
                 print(f"Error procesando SKU {row['SKU']}: {e_row}")
                 continue
-
+        
         if new_rows:
             results_ws.append_rows(new_rows)
-            print(f"Finalizado: {len(new_rows)} filas enviadas.")
+            print(f"Finalizado: {len(new_rows)} filas enviadas a Resultados.")
     except Exception as e:
-        print(f"Error crítico en main: {e}")
+        print(f"Error crítico: {e}")
 
 if __name__ == "__main__":
     main()
