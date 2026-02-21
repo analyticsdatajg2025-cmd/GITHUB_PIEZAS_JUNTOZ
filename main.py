@@ -4,10 +4,9 @@ import requests
 import gspread
 from google.oauth2.service_account import Credentials
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from bs4 import BeautifulSoup
 from datetime import datetime
 import io
-import urllib.parse
+import csv
 
 # --- CONFIGURACIÓN DE RUTAS ---
 BASE_PATH = os.path.dirname(os.path.realpath(__file__))
@@ -15,6 +14,7 @@ OUTPUT_DIR = os.path.join(BASE_PATH, 'output')
 TAGS_DIR = os.path.join(BASE_PATH, 'FONDOS', 'TAGS')
 FORMATS_DIR = os.path.join(BASE_PATH, 'FONDOS', 'FORMATOS')
 FONTS_DIR = os.path.join(BASE_PATH, 'TIPOGRAFIA')
+FEED_URL = "https://juntozstgsrvproduction.blob.core.windows.net/juntoz-feeds/google_juntoz_feed.txt"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -67,6 +67,23 @@ CONFIG = {
     }
 }
 
+# --- FUNCIONES DE APOYO ---
+
+def get_feed_data():
+    print("Descargando feed de productos (esto puede tardar unos segundos)...")
+    response = requests.get(FEED_URL)
+    response.encoding = 'utf-8'
+    feed_dict = {}
+    # El archivo es un TSV (tab separated values)
+    reader = csv.DictReader(io.StringIO(response.text), delimiter='\t')
+    for row in reader:
+        # Guardamos en minúsculas para match flexible
+        title = str(row.get('title', '')).strip().lower()
+        image = row.get('image_link', '')
+        if title:
+            feed_dict[title] = image
+    return feed_dict
+
 def get_font(name, size):
     path = os.path.join(FONTS_DIR, f"HurmeGeometricSans1 {name}.otf")
     if not os.path.exists(path):
@@ -80,73 +97,26 @@ def find_format_image(format_name):
             return path
     return None
 
-def scrape_image(sku):
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        }
-        r = requests.get(f"https://juntoz.com/search?q={sku}", timeout=15, headers=headers)
-        soup = BeautifulSoup(r.text, 'html.parser')
-        
-        # Estrategia Senior: Buscar en el srcset para encontrar la URL real de Next.js
-        imgs = soup.find_all('img', srcset=True)
-        
-        for img in imgs:
-            src = img.get('src', '')
-            # Buscamos el patrón que nos mostraste del inspeccionador
-            if '_next/image?url=' in src:
-                parsed_url = urllib.parse.urlparse(src)
-                query_params = urllib.parse.parse_qs(parsed_url.query)
-                if 'url' in query_params:
-                    # Extraemos la URL limpia que está dentro del parámetro
-                    real_url = query_params['url'][0]
-                    # Validamos que sea una imagen de producto (blob de Azure)
-                    if 'blob.core.windows.net' in real_url:
-                        return real_url
-
-        # Fallback por si la estructura cambia
-        for img in soup.find_all('img', src=True):
-            src = img['src']
-            if 'blob.core.windows.net' in src:
-                if src.startswith('//'): return 'https:' + src
-                return src
-                
-    except Exception as e:
-        print(f"Error en scraping para SKU {sku}: {e}")
-    return None
-
 def process_img(url, box_size):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Referer': 'https://juntoz.com/'
-    }
-    r = requests.get(url, headers=headers, timeout=15)
-    
+    r = requests.get(url, timeout=15)
     if r.status_code != 200:
-        raise ValueError(f"No se pudo descargar la imagen. Status: {r.status_code}")
-
+        raise ValueError(f"No se pudo descargar la imagen del feed. Status: {r.status_code}")
     img = Image.open(io.BytesIO(r.content)).convert("RGBA")
-    
-    # Redimensionar (Thumbnail) para mantener proporción
     img.thumbnail((box_size[2]-box_size[0], box_size[3]-box_size[1]), Image.LANCZOS)
     
-    # Limpieza de fondo blanco
     datas = img.getdata()
     new_data = []
     for item in datas:
-        # Tolerancia para blancos (240-255)
         if item[0] > 240 and item[1] > 240 and item[2] > 240:
             new_data.append((255, 255, 255, 0))
         else:
             new_data.append(item)
     img.putdata(new_data)
-    
     return img
 
 def draw_text_wrapped(draw, text, pos, max_x, font, fill):
     words = str(text).split()
-    lines = []
-    current_line = []
+    lines, current_line = [], []
     for word in words:
         current_line.append(word)
         if draw.textbbox(pos, " ".join(current_line), font=font)[2] > max_x:
@@ -160,29 +130,26 @@ def draw_text_wrapped(draw, text, pos, max_x, font, fill):
         y += font.size + 4
     return y
 
-def create_piece(row):
+def create_piece(row, image_url):
     f_key = row['Formato']
     if f_key not in CONFIG: return None
     c = CONFIG[f_key]
     
     bg_path = find_format_image(f_key)
     if not bg_path:
-        print(f"Error: No existe el fondo {f_key}")
+        print(f"Error: No se encontró el fondo {f_key}")
         return None
         
     canvas = Image.open(bg_path).convert("RGBA")
     draw = ImageDraw.Draw(canvas)
     
-    # 1. Imagen Producto (Llamada al Scraping corregido)
-    url = scrape_image(row['SKU'])
-    if url:
-        p_img = process_img(url, c['img_box'])
+    # 1. Imagen Producto (Desde el Link del Feed)
+    if image_url:
+        p_img = process_img(image_url, c['img_box'])
         w, h = p_img.size
         center_x = c['img_box'][0] + (c['img_box'][2] - c['img_box'][0] - w) // 2
         center_y = c['img_box'][1] + (c['img_box'][3] - c['img_box'][1] - h) // 2
         canvas.paste(p_img, (center_x, center_y), p_img)
-    else:
-        print(f"No se encontró imagen para el SKU {row['SKU']}")
 
     # 2. Tipo Envío
     envio_val = str(row['tipo envio']).strip()
@@ -192,14 +159,13 @@ def create_piece(row):
         e_img.thumbnail((c['envio_box'][2]-c['envio_box'][0], c['envio_box'][3]-c['envio_box'][1]))
         canvas.paste(e_img, (c['envio_box'][0], c['envio_box'][1]), e_img)
 
-    # 3. Dibujo de Contenedores
+    # 3. Contenedores
     draw.rectangle(c['rect_gris'], fill="#D9D9D9")
     draw.rounded_rectangle(c['rect_morado'], radius=20, fill="#8D3DCB")
 
-    # 4. Precios
+    # 4. Textos Precios
     f_reg = get_font("Regular", c['fonts']['reg'])
     f_bold = get_font("Bold", c['fonts']['precio'])
-    
     draw.text(c['precio_reg_pos'], f"{row['Tipo precio regular']}:", font=f_reg, fill="black")
     draw.text(c['simbolo_reg_pos'], "S/", font=f_reg, fill="black")
     draw.text(c['valor_reg_pos'], str(row['Valor precio regular']), font=f_reg, fill="black")
@@ -207,7 +173,6 @@ def create_piece(row):
     if row['Tipo precio regular'] == "Precio sin cupón":
         draw.text((c['rect_morado'][0]+20, c['rect_morado'][1]+35), "S/", font=get_font("Regular", 35), fill="white")
         draw.text((c['rect_morado'][0]+65, c['rect_morado'][1]+15), str(row['Precio descuento']), font=f_bold, fill="white")
-        
         draw.text((c['cupon_img_box'][0], c['rect_morado'][1]+5), "Con cupón:", font=get_font("Bold", 20), fill="white")
         val_cupon = str(row['Con cupon']).strip()
         if val_cupon in ["BBVACREDITO", "BCPCREDITO"]:
@@ -233,32 +198,54 @@ def create_piece(row):
     canvas.convert("RGB").save(os.path.join(OUTPUT_DIR, out_fn))
     return out_fn
 
+# --- PROCESO PRINCIPAL ---
+
 def main():
     try:
+        # 1. Cargar Feed
+        feed = get_feed_data()
+        
+        # 2. Conectar a Google Sheets
         creds_json = json.loads(os.environ['GOOGLE_CREDENTIALS'])
         creds = Credentials.from_service_account_info(creds_json, scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'])
         client = gspread.authorize(creds)
         sheet = client.open_by_key("19e1ct-5GhElvCKRthr-5O9t8O3knvVTB2iDvMQo0zzU")
-        
-        data = sheet.worksheet("Hoja 1").get_all_records()
+        input_ws = sheet.worksheet("Hoja 1")
         results_ws = sheet.worksheet("Resultados")
         
+        data = input_ws.get_all_records()
         new_rows = []
-        for row in data:
-            if not row['SKU']: continue
-            try:
-                print(f"Procesando: {row['SKU']} ({row['Formato']})")
-                fn = create_piece(row)
-                if fn:
-                    link = f"https://raw.githubusercontent.com/analyticsdatajg2025-cmd/GITHUB_PIEZAS_JUNTOZ/main/output/{fn}"
-                    new_rows.append([datetime.now().strftime("%Y-%m-%d %H:%M"), f"{row['SKU']}_{row['Formato']}", row['Formato'], link])
-            except Exception as e_row:
-                print(f"Error procesando SKU {row['SKU']}: {e_row}")
-                continue
         
+        # Para actualizar el Link Imagen en la Hoja 1 (Columna J es la 10)
+        updates = []
+
+        for i, row in enumerate(data, start=2): # start=2 por el encabezado
+            prod_name = str(row['Nombre del producto']).strip().lower()
+            img_url = feed.get(prod_name)
+            
+            if not img_url:
+                print(f"No se encontró imagen para: {prod_name}")
+                continue
+            
+            # Registrar actualización para Columna J (Link imagen)
+            updates.append({'range': f'J{i}', 'values': [[img_url]]})
+            
+            try:
+                print(f"Generando: {row['SKU']} ({row['Formato']})")
+                fn = create_piece(row, img_url)
+                if fn:
+                    link_repo = f"https://raw.githubusercontent.com/analyticsdatajg2025-cmd/GITHUB_PIEZAS_JUNTOZ/main/output/{fn}"
+                    new_rows.append([datetime.now().strftime("%Y-%m-%d %H:%M"), f"{row['SKU']}_{row['Formato']}", row['Formato'], link_repo])
+            except Exception as e:
+                print(f"Error en {row['SKU']}: {e}")
+
+        # 3. Ejecutar actualizaciones masivas
+        if updates:
+            input_ws.batch_update(updates)
         if new_rows:
             results_ws.append_rows(new_rows)
-            print(f"Finalizado: {len(new_rows)} filas enviadas a Resultados.")
+            print(f"Proceso completo. {len(new_rows)} piezas creadas.")
+
     except Exception as e:
         print(f"Error crítico: {e}")
 
