@@ -1,14 +1,14 @@
 name: Generador de Piezas Juntoz
 
 on:
-  workflow_dispatch: # Para que puedas darle al botón "Run workflow" cuando quieras
+  workflow_dispatch: # Ejecución manual desde la pestaña Actions
   schedule:
-    - cron: '0 * * * *' # Se ejecuta automáticamente cada hora
+    - cron: '0 * * * *' # Ejecución automática cada hora
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Necesario para que el bot pueda subir las imágenes al repo
+    # Permisos necesarios para que el bot pueda escribir y subir las imágenes al repositorio
     permissions:
       contents: write
       
@@ -19,13 +19,19 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
-          cache: 'pip' # Acelera las ejecuciones futuras
+          python-version: '3.10' # Versión estable que evita avisos de obsolescencia
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Debug - List Files
+        # Este paso es vital para verificar que las carpetas y archivos existen con el nombre correcto
+        run: |
+          echo "Verificando estructura de carpetas:"
+          ls -R
 
       - name: Run Automation
         env:
@@ -36,6 +42,14 @@ jobs:
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "actions@github.com"
-          git add output/*.png || echo "No hay imágenes nuevas"
-          # Solo hace commit si hay cambios reales en la carpeta output
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Piezas generadas: $(date)" && git push)
+          
+          # Agregamos todas las imágenes generadas en la carpeta output
+          git add output/*.png || echo "No se encontraron imágenes nuevas para agregar"
+          
+          # Solo realiza el commit y push si hay cambios detectados para evitar errores de ejecución
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "Piezas generadas automáticamente: $(date)"
+            git push
+          else
+            echo "Sin cambios detectados, nada que subir."
+          fi
