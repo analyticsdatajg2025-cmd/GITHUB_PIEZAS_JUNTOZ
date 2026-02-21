@@ -12,8 +12,8 @@ import io
 # Usamos realpath para que GitHub Actions encuentre las carpetas sin importar dónde se ejecute
 BASE_PATH = os.path.dirname(os.path.realpath(__file__))
 OUTPUT_DIR = os.path.join(BASE_PATH, 'output')
-TAGS_DIR = os.path.join(BASE_PATH, 'TAGS')
-FORMATS_DIR = os.path.join(BASE_PATH, 'FORMATOS')
+TAGS_DIR = os.path.join(BASE_PATH, 'FONDOS', 'TAGS')
+FORMATS_DIR = os.path.join(BASE_PATH, 'FONDOS', 'FORMATOS')
 FONTS_DIR = os.path.join(BASE_PATH, 'TIPOGRAFIA')
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
