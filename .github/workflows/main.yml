@@ -1,0 +1,41 @@
+name: Generador de Piezas Juntoz
+
+on:
+  workflow_dispatch: # Para que puedas darle al botón "Run workflow" cuando quieras
+  schedule:
+    - cron: '0 * * * *' # Se ejecuta automáticamente cada hora
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Necesario para que el bot pueda subir las imágenes al repo
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip' # Acelera las ejecuciones futuras
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Automation
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: python main.py
+
+      - name: Commit and Push Results
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "actions@github.com"
+          git add output/*.png || echo "No hay imágenes nuevas"
+          # Solo hace commit si hay cambios reales en la carpeta output
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Piezas generadas: $(date)" && git push)
