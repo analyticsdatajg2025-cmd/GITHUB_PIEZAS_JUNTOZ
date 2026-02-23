@@ -19,6 +19,7 @@ FEED_URL = "https://juntozstgsrvproduction.blob.core.windows.net/juntoz-feeds/go
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # --- CONFIGURACIÓN TÉCNICA DE FORMATOS ---
+# Se restaron 5px a las posiciones 'y' de precio_reg, simbolo_reg y valor_reg para subirlos
 CONFIG = {
     "PPL": {
         "res": (1080, 1080),
@@ -68,7 +69,7 @@ CONFIG = {
 }
 
 def get_feed_data():
-    print("Descargando feed de productos (esto puede tardar unos segundos)...")
+    print("Descargando feed de productos...")
     response = requests.get(FEED_URL)
     response.encoding = 'utf-8'
     feed_dict = {}
@@ -131,9 +132,7 @@ def create_piece(row, image_url):
     c = CONFIG[f_key]
     
     bg_path = find_format_image(f_key)
-    if not bg_path:
-        print(f"Error: No se encontró el fondo {f_key}")
-        return None
+    if not bg_path: return None
         
     canvas = Image.open(bg_path).convert("RGBA")
     draw = ImageDraw.Draw(canvas)
@@ -152,31 +151,27 @@ def create_piece(row, image_url):
         e_img.thumbnail((c['envio_box'][2]-c['envio_box'][0], c['envio_box'][3]-c['envio_box'][1]))
         canvas.paste(e_img, (c['envio_box'][0], c['envio_box'][1]), e_img)
 
+    # 3. Contenedores (Gris redondeado solo arriba)
     draw.rounded_rectangle(c['rect_gris'], radius=15, fill="#D9D9D9")
-    draw.rectangle([c['rect_gris'][0], (c['rect_gris'][1] + c['rect_gris'][3]) // 2, c['rect_gris'][2], c['rect_gris'][3]], fill="#D9D9D9")
+    # Dibujamos un rectángulo recto en la mitad inferior del gris para que parezca redondeado solo arriba
+    bottom_rect = [c['rect_gris'][0], (c['rect_gris'][1] + c['rect_gris'][3]) // 2, c['rect_gris'][2], c['rect_gris'][3]]
+    draw.rectangle(bottom_rect, fill="#D9D9D9")
+    
     draw.rounded_rectangle(c['rect_morado'], radius=20, fill="#8D3DCB")
 
-    # --- Lógica de Precios con Adaptabilidad (Auto-shrink) ---
+    # 4. Textos Precios
     f_reg = get_font("Regular", c['fonts']['reg'])
-    base_size = c['fonts']['precio']
-    f_bold_price = get_font("Bold", base_size)
+    f_bold_price = get_font("Bold", c['fonts']['precio'])
+    f_bold_small = get_font("Bold", int(c['fonts']['precio'] * 0.55)) # S/ proporcionalmente pequeño
 
     draw.text(c['precio_reg_pos'], f"{row['Tipo precio regular']}:", font=f_reg, fill="black")
     draw.text(c['simbolo_reg_pos'], "S/", font=f_reg, fill="black")
     draw.text(c['valor_reg_pos'], str(row['Valor precio regular']), font=f_reg, fill="black")
 
     if row['Tipo precio regular'] == "Precio sin cupón":
-        price_str = str(row['Precio descuento'])
-        # Espacio máximo en la columna izquierda (antes del cupón)
-        max_col_w = (c['cupon_img_box'][0] - c['rect_morado'][0]) - 80
-        
-        while draw.textbbox((0,0), price_str, font=f_bold_price)[2] > max_col_w and base_size > 30:
-            base_size -= 2
-            f_bold_price = get_font("Bold", base_size)
-
-        f_bold_small = get_font("Bold", int(base_size * 0.55))
+        # S/ Pequeño a la izquierda
         draw.text((c['rect_morado'][0]+22, c['rect_morado'][1]+42), "S/", font=f_bold_small, fill="white")
-        draw.text((c['rect_morado'][0]+68, c['rect_morado'][1]+15), price_str, font=f_bold_price, fill="white")
+        draw.text((c['rect_morado'][0]+68, c['rect_morado'][1]+15), str(row['Precio descuento']), font=f_bold_price, fill="white")
         draw.text((c['cupon_img_box'][0], c['rect_morado'][1]+5), "Con cupón:", font=get_font("Bold", 20), fill="white")
         
         val_cupon = str(row['Con cupon']).strip()
@@ -185,28 +180,27 @@ def create_piece(row, image_url):
             if os.path.exists(tag_path):
                 tag_img = Image.open(tag_path).convert("RGBA")
                 tag_img.thumbnail((c['cupon_img_box'][2]-c['cupon_img_box'][0], c['cupon_img_box'][3]-c['cupon_img_box'][1]))
+                # Pegar centrado en el box blanco
                 canvas.paste(tag_img, (c['cupon_img_box'][0], c['cupon_img_box'][1]), tag_img)
         else:
             draw.rounded_rectangle(c['cupon_img_box'], radius=10, fill="white")
             f_cupon = get_font("Bold", 22)
+            # Centrado de texto PADS
             bbox = draw.textbbox((0, 0), val_cupon, font=f_cupon)
-            tx = c['cupon_img_box'][0] + (c['cupon_img_box'][2]-c['cupon_img_box'][0]-(bbox[2]-bbox[0]))//2
-            ty = c['cupon_img_box'][1] + (c['cupon_img_box'][3]-c['cupon_img_box'][1]-(bbox[3]-bbox[1]))//2 - 2
+            tw = bbox[2] - bbox[0]
+            th = bbox[3] - bbox[1]
+            tx = c['cupon_img_box'][0] + (c['cupon_img_box'][2] - c['cupon_img_box'][0] - tw) // 2
+            ty = c['cupon_img_box'][1] + (c['cupon_img_box'][3] - c['cupon_img_box'][1] - th) // 2 - 2
             draw.text((tx, ty), val_cupon, font=f_cupon, fill="#8D3DCB")
     else:
+        # Centrado General con S/ pequeño
         price_str = str(row['Precio descuento'])
-        max_full_w = (c['rect_morado'][2] - c['rect_morado'][0]) - 100
-        
-        while draw.textbbox((0,0), price_str, font=f_bold_price)[2] > max_full_w and base_size > 40:
-            base_size -= 2
-            f_bold_price = get_font("Bold", base_size)
-
-        f_bold_small = get_font("Bold", int(base_size * 0.55))
-        w_p = draw.textbbox((0,0), price_str, font=f_bold_price)[2]
-        w_s = draw.textbbox((0,0), "S/", font=f_bold_small)[2]
-        st_x = c['rect_morado'][0] + (c['rect_morado'][2]-c['rect_morado'][0]-(w_p+w_s+5))//2
-        draw.text((st_x, c['rect_morado'][1]+42), "S/", font=f_bold_small, fill="white")
-        draw.text((st_x+w_s+5, c['rect_morado'][1]+15), price_str, font=f_bold_price, fill="white")
+        w_price = draw.textbbox((0,0), price_str, font=f_bold_price)[2]
+        w_simb = draw.textbbox((0,0), "S/", font=f_bold_small)[2]
+        total_w = w_price + w_simb + 5
+        start_x = c['rect_morado'][0] + (c['rect_morado'][2] - c['rect_morado'][0] - total_w) // 2
+        draw.text((start_x, c['rect_morado'][1]+42), "S/", font=f_bold_small, fill="white")
+        draw.text((start_x + w_simb + 5, c['rect_morado'][1]+15), price_str, font=f_bold_price, fill="white")
 
     draw.text(c['marca_pos'], str(row['Marca']), font=get_font("Bold", c['fonts']['marca']), fill="#8D3DCB")
     draw_text_wrapped(draw, str(row['Nombre del producto']), c['prod_pos'], c['prod_max_x'], get_font("Regular Oblique", c['fonts']['prod']), "#8D3DCB")
@@ -225,17 +219,19 @@ def main():
         input_ws = sheet.worksheet("Hoja 1")
         results_ws = sheet.worksheet("Resultados")
         
-        existing_ids = results_ws.col_values(2)
+        # Obtener IDs ya procesados para evitar duplicados
+        existing_ids = results_ws.col_values(2) # Columna ID es la B
+        
         data = input_ws.get_all_records()
-        new_rows, updates = [], []
+        new_rows = []
+        updates = []
 
         for i, row in enumerate(data, start=2):
-            if not row['SKU']: continue
-            # ID: SKU_FORMATO_TIPOPRECIO_ENVIO
-            id_pieza = f"{row['SKU']}_{row['Formato']}_{row['Tipo precio regular']}_{row['tipo envio']}".replace(" ", "_")
+            sku_format_id = f"{row['SKU']}_{row['Formato']}"
             
-            if id_pieza in existing_ids:
-                print(f"Saltando {id_pieza}, ya existe.")
+            # Si el ID ya existe en Resultados, saltamos la fila
+            if sku_format_id in existing_ids:
+                print(f"Saltando {sku_format_id}: ya existe en Resultados.")
                 continue
 
             prod_name = str(row['Nombre del producto']).strip().lower()
@@ -243,18 +239,20 @@ def main():
             if not img_url: continue
             
             updates.append({'range': f'J{i}', 'values': [[img_url]]})
+            
             try:
+                print(f"Generando: {sku_format_id}")
                 fn = create_piece(row, img_url)
                 if fn:
                     link_repo = f"https://raw.githubusercontent.com/analyticsdatajg2025-cmd/GITHUB_PIEZAS_JUNTOZ/main/output/{fn}"
-                    new_rows.append([datetime.now().strftime("%Y-%m-%d %H:%M"), id_pieza, row['Formato'], link_repo])
+                    new_rows.append([datetime.now().strftime("%Y-%m-%d %H:%M"), sku_format_id, row['Formato'], link_repo])
             except Exception as e:
                 print(f"Error en {row['SKU']}: {e}")
 
         if updates: input_ws.batch_update(updates)
         if new_rows:
             results_ws.append_rows(new_rows)
-            print(f"Proceso completo. {len(new_rows)} piezas creadas.")
+            print(f"Proceso finalizado. {len(new_rows)} nuevas piezas.")
 
     except Exception as e:
         print(f"Error crítico: {e}")
