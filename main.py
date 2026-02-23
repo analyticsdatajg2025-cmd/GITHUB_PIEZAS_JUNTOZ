@@ -30,11 +30,11 @@ CONFIG = {
         "prod_max_x": 504,
         "rect_gris": (553, 846, 965, 911),
         "rect_morado": (549, 904, 962, 1019),
-        "precio_reg_pos": (564, 882), 
-        "simbolo_reg_pos": (843, 882),
-        "valor_reg_pos": (872, 882),
+        "precio_reg_pos": (564, 872), 
+        "simbolo_reg_pos": (843, 872),
+        "valor_reg_pos": (872, 872),
         "cupon_img_box": (794, 940, 949, 997),
-        "fonts": {"marca": 40, "prod": 35, "precio": 73, "reg": 30, "cupon_txt": 27}
+        "fonts": {"marca": 40, "prod": 32, "precio": 73, "reg": 30, "cupon_txt": 27}
     },
     "PUSH": {
         "res": (1200, 629),
@@ -45,11 +45,11 @@ CONFIG = {
         "prod_max_x": 1122,
         "rect_gris": (741, 312, 1119, 370),
         "rect_morado": (740, 362, 1118, 472),
-        "precio_reg_pos": (763, 342),
-        "simbolo_reg_pos": (1016, 342),
-        "valor_reg_pos": (1050, 342),
+        "precio_reg_pos": (763, 332),
+        "simbolo_reg_pos": (1016, 332),
+        "valor_reg_pos": (1050, 332),
         "cupon_img_box": (954, 400, 1105, 455),
-        "fonts": {"marca": 36, "prod": 31, "precio": 71, "reg": 30, "cupon_txt": 25}
+        "fonts": {"marca": 36, "prod": 28, "precio": 71, "reg": 30, "cupon_txt": 25}
     },
     "STORY": {
         "res": (1080, 1920),
@@ -60,11 +60,11 @@ CONFIG = {
         "prod_max_x": 492,
         "rect_gris": (524, 314, 984, 371),
         "rect_morado": (521, 365, 984, 496),
-        "precio_reg_pos": (559, 341),
-        "simbolo_reg_pos": (856, 341),
-        "valor_reg_pos": (891, 341),
+        "precio_reg_pos": (559, 331),
+        "simbolo_reg_pos": (856, 331),
+        "valor_reg_pos": (891, 331),
         "cupon_img_box": (815, 410, 968, 474),
-        "fonts": {"marca": 40, "prod": 37, "precio": 85, "reg": 35, "cupon_txt": 30}
+        "fonts": {"marca": 40, "prod": 35, "precio": 85, "reg": 35, "cupon_txt": 30}
     }
 }
 
