@@ -211,7 +211,8 @@ def create_piece(row, image_url):
     draw.text(c['marca_pos'], str(row['Marca']), font=get_font("Bold", c['fonts']['marca']), fill="#8D3DCB")
     draw_text_wrapped(draw, str(row['Nombre del producto']), c['prod_pos'], c['prod_max_x'], get_font("Regular Oblique", c['fonts']['prod']), "#8D3DCB")
 
-    out_fn = f"{row['SKU']}_{f_key}.png"
+    id_safe = f"{row['SKU']}_{f_key}_{row['Tipo precio regular']}_{row['tipo envio']}".replace(" ", "_")
+    out_fn = f"{id_safe}.png"
     canvas.convert("RGB").save(os.path.join(OUTPUT_DIR, out_fn))
     return out_fn
 
