@@ -160,9 +160,9 @@ def create_piece(row, image_url):
     base_size = c['fonts']['precio']
     f_bold_price = get_font("Bold", base_size)
 
-    draw.text((c['precio_reg_pos'][0], c['precio_reg_pos'][1]+y_offset), f"{row['Tipo precio regular']}:", font=f_reg, fill="8D3DCB")
-    draw.text((c['simbolo_reg_pos'][0], c['simbolo_reg_pos'][1]+y_offset), "S/", font=f_reg, fill="8D3DCB")
-    draw.text((c['valor_reg_pos'][0], c['valor_reg_pos'][1]+y_offset), str(row['Valor precio regular']), font=f_reg, fill="8D3DCB")
+    draw.text((c['precio_reg_pos'][0], c['precio_reg_pos'][1]+y_offset), f"{row['Tipo precio regular']}:", font=f_reg, fill="#8D3DCB")
+    draw.text((c['simbolo_reg_pos'][0], c['simbolo_reg_pos'][1]+y_offset), "S/", font=f_reg, fill="#8D3DCB")
+    draw.text((c['valor_reg_pos'][0], c['valor_reg_pos'][1]+y_offset), str(row['Valor precio regular']), font=f_reg, fill="#8D3DCB")
 
     if row['Tipo precio regular'] == "Precio sin cupón":
         price_str = str(row['Precio descuento'])
