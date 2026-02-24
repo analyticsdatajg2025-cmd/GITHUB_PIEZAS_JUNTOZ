@@ -67,6 +67,15 @@ CONFIG = {
     }
 }
 
+def format_miles(valor):
+    """Agrega coma de miles a un número o string numérico"""
+    try:
+        # Quitamos comas previas si existen para no duplicar
+        val_limpio = str(valor).replace(",", "")
+        return "{:,}".format(float(val_limpio)).replace(".0", "")
+    except:
+        return str(valor)
+
 def get_feed_data():
     print("Descargando feed de productos...")
     response = requests.get(FEED_URL)
@@ -124,8 +133,7 @@ def create_piece(row, image_url):
     canvas = Image.open(bg_path).convert("RGBA")
     draw = ImageDraw.Draw(canvas)
     
-    # --- LOGICA DINÁMICA DE OFFSET PARA CUPÓN EXTRA ---
-    # Si hay cupón extra, subimos los bloques 25px para que no choquen abajo
+    # Lógica Offset
     y_offset = 0
     cupon_ps = str(row.get('Cupon con PS', '')).strip()
     usa_cupon_extra = False
@@ -147,34 +155,54 @@ def create_piece(row, image_url):
         e_img.thumbnail((c['envio_box'][2]-c['envio_box'][0], c['envio_box'][3]-c['envio_box'][1]))
         canvas.paste(e_img, (c['envio_box'][0], c['envio_box'][1]), e_img)
 
-    # 3. Contenedores con Offset
+    # --- BLOQUES DE FONDO (Dibujados por capas) ---
     rg = c['rect_gris']
     draw.rounded_rectangle([rg[0], rg[1]+y_offset, rg[2], rg[3]+y_offset], radius=15, fill="#F7F7F7")
     draw.rectangle([rg[0], (rg[1]+rg[3])//2+y_offset, rg[2], rg[3]+y_offset], fill="#F7F7F7")
     
     rm = c['rect_morado']
+    
+    # 1. Capa de Cupón PS (Atrás del morado)
+    if usa_cupon_extra:
+        extra_w, extra_h = 300, 45 # Un poco más grande para el texto +5pts
+        center_x = (rm[0] + rm[2]) // 2
+        ex1, ey1 = center_x - (extra_w // 2), rm[3] + y_offset - 5 # Ligera superposición arriba
+        ex2, ey2 = ex1 + extra_w, ey1 + extra_h
+        draw.rounded_rectangle([ex1, ey1, ex2, ey2], radius=12, fill="#F7F7F7")
+        draw.rectangle([ex1, ey1, ex2, ey1 + 15], fill="#F7F7F7") # Esquinas superiores rectas
+        
+        txt_extra = f"Cupón: {cupon_ps}"
+        f_extra = get_font("Bold", 25) # +5pts sobre el anterior
+        bbox_ex = draw.textbbox((0,0), txt_extra, font=f_extra)
+        tex = ex1 + (extra_w - (bbox_ex[2]-bbox_ex[0])) // 2
+        tey = ey1 + (extra_h - (bbox_ex[3]-bbox_ex[1])) // 2
+        draw.text((tex, tey), txt_extra, font=f_extra, fill="#8D3DCB")
+
+    # 2. Capa Preciador Morado (Encima de la solapa del cupón)
     draw.rounded_rectangle([rm[0], rm[1]+y_offset, rm[2], rm[3]+y_offset], radius=20, fill="#8D3DCB")
 
-    # 4. Textos Precios con Offset
+    # --- TEXTOS ---
     f_reg = get_font("Regular", c['fonts']['reg'])
     base_size = c['fonts']['precio']
     f_bold_price = get_font("Bold", base_size)
 
     draw.text((c['precio_reg_pos'][0], c['precio_reg_pos'][1]+y_offset), f"{row['Tipo precio regular']}:", font=f_reg, fill="#8D3DCB")
     draw.text((c['simbolo_reg_pos'][0], c['simbolo_reg_pos'][1]+y_offset), "S/", font=f_reg, fill="#8D3DCB")
-    draw.text((c['valor_reg_pos'][0], c['valor_reg_pos'][1]+y_offset), str(row['Valor precio regular']), font=f_reg, fill="#8D3DCB")
+    draw.text((c['valor_reg_pos'][0], c['valor_reg_pos'][1]+y_offset), format_miles(row['Valor precio regular']), font=f_reg, fill="#8D3DCB")
 
     if row['Tipo precio regular'] == "Precio sin cupón":
-        price_str = str(row['Precio descuento'])
+        price_str = format_miles(row['Precio descuento'])
         max_col_w = (c['cupon_img_box'][0] - c['rect_morado'][0]) - 80
         while draw.textbbox((0,0), price_str, font=f_bold_price)[2] > max_col_w and base_size > 30:
             base_size -= 2
             f_bold_price = get_font("Bold", base_size)
 
         f_bold_small = get_font("Bold", int(base_size * 0.55))
-        draw.text((c['rect_morado'][0]+22, c['rect_morado'][1]+15+y_offset), "S/", font=f_bold_small, fill="white")
-        draw.text((c['rect_morado'][0]+68, c['rect_morado'][1]+15+y_offset), price_str, font=f_bold_price, fill="white")
-        draw.text((c['cupon_img_box'][0], c['rect_morado'][1]+5+y_offset), "Con cupón:", font=get_font("Bold", 20), fill="white")
+        # +25px en Y (15 original + 10 solicitado)
+        draw.text((c['rect_morado'][0]+22, c['rect_morado'][1]+25+y_offset), "S/", font=f_bold_small, fill="white")
+        draw.text((c['rect_morado'][0]+68, c['rect_morado'][1]+25+y_offset), price_str, font=f_bold_price, fill="white")
+        # Texto "Con cupón" +10px extra
+        draw.text((c['cupon_img_box'][0], c['rect_morado'][1]+15+y_offset), "Con cupón:", font=get_font("Bold", 20), fill="white")
         
         val_cupon = str(row['Con cupon']).strip()
         if val_cupon in ["BBVACREDITO", "BCPCREDITO"]:
@@ -182,42 +210,19 @@ def create_piece(row, image_url):
             if os.path.exists(tag_path):
                 tag_img = Image.open(tag_path).convert("RGBA")
                 tag_img.thumbnail((c['cupon_img_box'][2]-c['cupon_img_box'][0], c['cupon_img_box'][3]-c['cupon_img_box'][1]))
-                canvas.paste(tag_img, (c['cupon_img_box'][0], c['cupon_img_box'][1]+y_offset), tag_img)
+                # Posición bajada +10px
+                canvas.paste(tag_img, (c['cupon_img_box'][0], c['cupon_img_box'][1]+y_offset+10), tag_img)
         else:
-            draw.rounded_rectangle([c['cupon_img_box'][0], c['cupon_img_box'][1]+y_offset, c['cupon_img_box'][2], c['cupon_img_box'][3]+y_offset], radius=10, fill="white")
+            draw.rounded_rectangle([c['cupon_img_box'][0], c['cupon_img_box'][1]+y_offset+10, c['cupon_img_box'][2], c['cupon_img_box'][3]+y_offset+10], radius=10, fill="white")
             f_cupon = get_font("Bold", 22)
             bbox = draw.textbbox((0, 0), val_cupon, font=f_cupon)
             tx = c['cupon_img_box'][0] + (c['cupon_img_box'][2]-c['cupon_img_box'][0]-(bbox[2]-bbox[0]))//2
-            ty = c['cupon_img_box'][1] + (c['cupon_img_box'][3]-c['cupon_img_box'][1]-(bbox[3]-bbox[1]))//2 - 2
+            ty = c['cupon_img_box'][1] + (c['cupon_img_box'][3]-c['cupon_img_box'][1]-(bbox[3]-bbox[1]))//2 + 8 # Bajado
             draw.text((tx, ty+y_offset), val_cupon, font=f_cupon, fill="#8D3DCB")
-            
-        # --- DIBUJO DEL CUPÓN EXTRA (PS) ---
-        if usa_cupon_extra:
-            # Creamos un contenedor blanco debajo del morado
-            # Centrado respecto al contenedor morado
-            extra_w = 280
-            extra_h = 35
-            center_morado_x = (rm[0] + rm[2]) // 2
-            extra_x1 = center_morado_x - (extra_w // 2)
-            extra_y1 = rm[3] + y_offset # Pegado al borde inferior del morado (que ya tiene offset)
-            extra_x2 = extra_x1 + extra_w
-            extra_y2 = extra_y1 + extra_h
-            
-            # Dibujamos contenedor blanco con esquinas inferiores redondeadas
-            draw.rounded_rectangle([extra_x1, extra_y1, extra_x2, extra_y2], radius=12, fill="white")
-            # Aplanamos las esquinas superiores dibujando un pequeño rectangulo arriba
-            draw.rectangle([extra_x1, extra_y1, extra_x2, extra_y1 + 10], fill="white")
-            
-            txt_extra = f"Cupón: {cupon_ps}"
-            f_extra = get_font("Bold", 20)
-            bbox_ex = draw.textbbox((0,0), txt_extra, font=f_extra)
-            tex = extra_x1 + (extra_w - (bbox_ex[2]-bbox_ex[0])) // 2
-            tey = extra_y1 + (extra_h - (bbox_ex[3]-bbox_ex[1])) // 2 - 2
-            draw.text((tex, tey), txt_extra, font=f_extra, fill="#8D3DCB")
 
     else:
         # Centrado General
-        price_str = str(row['Precio descuento'])
+        price_str = format_miles(row['Precio descuento'])
         max_full_w = (c['rect_morado'][2] - c['rect_morado'][0]) - 100
         while draw.textbbox((0,0), price_str, font=f_bold_price)[2] > max_full_w and base_size > 40:
             base_size -= 2
@@ -227,14 +232,22 @@ def create_piece(row, image_url):
         w_p = draw.textbbox((0,0), price_str, font=f_bold_price)[2]
         w_s = draw.textbbox((0,0), "S/", font=f_bold_small)[2]
         st_x = rm[0] + (rm[2]-rm[0]-(w_p+w_s+5))//2
-        draw.text((st_x, rm[1]+15+y_offset), "S/", font=f_bold_small, fill="white")
-        draw.text((st_x+w_s+5, rm[1]+15+y_offset), price_str, font=f_bold_price, fill="white")
+        # +25px en Y (15 original + 10 solicitado)
+        draw.text((st_x, rm[1]+25+y_offset), "S/", font=f_bold_small, fill="white")
+        draw.text((st_x+w_s+5, rm[1]+25+y_offset), price_str, font=f_bold_price, fill="white")
 
-    draw.text(c['marca_pos'], str(row['Marca']), font=get_font("Bold", c['fonts']['marca']), fill="#8D3DCB")
-    draw_text_wrapped(draw, str(row['Nombre del producto']), c['prod_pos'], c['prod_max_x'], get_font("Regular Oblique", c['fonts']['prod']), "#8D3DCB")
+    # --- Marca y Producto (Con ajuste PUSH) ---
+    marca_y = c['marca_pos'][1]
+    prod_y = c['prod_pos'][1]
+    
+    if f_key == "PUSH" and usa_cupon_extra:
+        marca_y -= 30 # Sube marca
+        prod_y -= 30  # Sube producto
+
+    draw.text((c['marca_pos'][0], marca_y), str(row['Marca']), font=get_font("Bold", c['fonts']['marca']), fill="#8D3DCB")
+    draw_text_wrapped(draw, str(row['Nombre del producto']), (c['prod_pos'][0], prod_y), c['prod_max_x'], get_font("Regular Oblique", c['fonts']['prod']), "#8D3DCB")
 
     val_ps = str(row.get('Cupon con PS', '')).strip() if str(row.get('Cupon con PS', '')).strip() else "SINPS"
-    # Limpiamos el ID de caracteres que Windows/Linux no permiten en nombres de archivos
     id_raw = f"{row['SKU']}_{f_key}_{row['Tipo precio regular']}_{row['Tipo envio']}_{val_ps}"
     id_safe = "".join([c for c in id_raw if c.isalnum() or c in (' ', '_', '-')]).replace(" ", "_")
     
@@ -259,7 +272,6 @@ def main():
         for i, row in enumerate(data, start=2):
             if not row['SKU']: continue
             val_ps = str(row.get('Cupon con PS', '')).strip() if str(row.get('Cupon con PS', '')).strip() else "SINPS"
-            # Hacemos la misma limpieza para que el ID del Sheets coincida con el nombre del archivo
             id_raw = f"{row['SKU']}_{row['Formato']}_{row['Tipo precio regular']}_{row['Tipo envio']}_{val_ps}"
             id_pieza = "".join([c for c in id_raw if c.isalnum() or c in (' ', '_', '-')]).replace(" ", "_")
             if id_pieza in existing_ids: continue
