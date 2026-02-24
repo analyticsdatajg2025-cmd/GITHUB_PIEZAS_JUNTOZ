@@ -140,7 +140,7 @@ def create_piece(row, image_url):
         w, h = p_img.size
         canvas.paste(p_img, (c['img_box'][0] + (c['img_box'][2]-c['img_box'][0]-w)//2, c['img_box'][1] + (c['img_box'][3]-c['img_box'][1]-h)//2), p_img)
 
-    envio_val = str(row['tipo envio']).strip()
+    envio_val = str(row['Tipo envio']).strip()
     envio_path = os.path.join(TAGS_DIR, f"{envio_val}.png")
     if envio_val != "NINGUNO" and os.path.exists(envio_path):
         e_img = Image.open(envio_path).convert("RGBA")
@@ -234,7 +234,10 @@ def create_piece(row, image_url):
     draw_text_wrapped(draw, str(row['Nombre del producto']), c['prod_pos'], c['prod_max_x'], get_font("Regular Oblique", c['fonts']['prod']), "#8D3DCB")
 
     val_ps = str(row.get('Cupon con PS', '')).strip() if str(row.get('Cupon con PS', '')).strip() else "SINPS"
-    id_safe = f"{row['SKU']}_{f_key}_{row['Tipo precio regular']}_{row['tipo envio']}_{val_ps}".replace(" ", "_")
+    # Limpiamos el ID de caracteres que Windows/Linux no permiten en nombres de archivos
+    id_raw = f"{row['SKU']}_{f_key}_{row['Tipo precio regular']}_{row['Tipo envio']}_{val_ps}"
+    id_safe = "".join([c for c in id_raw if c.isalnum() or c in (' ', '_', '-')]).replace(" ", "_")
+    
     out_fn = f"{id_safe}.png"
     canvas.convert("RGB").save(os.path.join(OUTPUT_DIR, out_fn))
     return out_fn
@@ -256,14 +259,16 @@ def main():
         for i, row in enumerate(data, start=2):
             if not row['SKU']: continue
             val_ps = str(row.get('Cupon con PS', '')).strip() if str(row.get('Cupon con PS', '')).strip() else "SINPS"
-            id_pieza = f"{row['SKU']}_{row['Formato']}_{row['Tipo precio regular']}_{row['tipo envio']}_{val_ps}".replace(" ", "_")
+            # Hacemos la misma limpieza para que el ID del Sheets coincida con el nombre del archivo
+            id_raw = f"{row['SKU']}_{row['Formato']}_{row['Tipo precio regular']}_{row['Tipo envio']}_{val_ps}"
+            id_pieza = "".join([c for c in id_raw if c.isalnum() or c in (' ', '_', '-')]).replace(" ", "_")
             if id_pieza in existing_ids: continue
 
             prod_name = str(row['Nombre del producto']).strip().lower()
             img_url = feed.get(prod_name)
             if not img_url: continue
             
-            updates.append({'range': f'J{i}', 'values': [[img_url]]})
+            updates.append({'range': f'K{i}', 'values': [[img_url]]})
             try:
                 fn = create_piece(row, img_url)
                 if fn:
